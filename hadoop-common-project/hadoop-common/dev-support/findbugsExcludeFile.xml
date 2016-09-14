@@ -44,9 +44,22 @@
      --> 
      <Match>
        <Class name="org.apache.hadoop.ipc.Client$Connection" />
-       <Field name="out" />
+       <Field name="ipcStreams" />
        <Bug pattern="IS2_INCONSISTENT_SYNC" />
      </Match>
+    <!--
+       The nativeCoder field is get/set and used by native codes.
+    -->
+    <Match>
+        <Class name="org.apache.hadoop.io.erasurecode.rawcoder.AbstractNativeRawEncoder" />
+        <Field name="nativeCoder" />
+        <Bug pattern="UUF_UNUSED_FIELD" />
+    </Match>
+    <Match>
+        <Class name="org.apache.hadoop.io.erasurecode.rawcoder.AbstractNativeRawDecoder" />
+        <Field name="nativeCoder" />
+        <Bug pattern="UUF_UNUSED_FIELD" />
+    </Match>
      <!-- 
        Further SaslException should be ignored during cleanup and
        original exception should be re-thrown.
@@ -328,13 +341,7 @@
        <Method name="removeRenewAction" />
        <Bug pattern="BC_UNCONFIRMED_CAST" />
      </Match>
-     
-     <!-- Inconsistent synchronization flagged by findbugs is not valid. -->
-     <Match>
-       <Class name="org.apache.hadoop.ipc.Client$Connection" />
-       <Field name="in" />
-       <Bug pattern="IS2_INCONSISTENT_SYNC" />
-     </Match>
+
      <!-- 
        The switch condition for INITIATE is expected to fallthru to RESPONSE
        to process initial sasl response token included in the INITIATE
@@ -345,7 +352,13 @@
        <Bug pattern="SF_SWITCH_FALLTHROUGH" />
      </Match>
 
-     <!-- Synchronization performed on util.concurrent instance. -->
+     <!-- WA_NOT_IN_LOOP is invalid in util.concurrent.AsyncGet$Util.wait. -->
+     <Match>
+       <Class name="org.apache.hadoop.util.concurrent.AsyncGet$Util" />
+       <Method name="wait" />
+       <Bug pattern="WA_NOT_IN_LOOP" />
+     </Match>
+
      <Match>
        <Class name="org.apache.hadoop.service.AbstractService" />
        <Method name="stop" />

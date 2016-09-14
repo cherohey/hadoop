@@ -28,26 +28,14 @@ import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ipc.Client.ConnectionId;
+import org.apache.hadoop.ipc.Server.Connection;
 import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.KerberosInfo;
-import org.apache.hadoop.security.SaslInputStream;
-import org.apache.hadoop.security.SaslPlainServer;
-import org.apache.hadoop.security.SaslPropertiesResolver;
-import org.apache.hadoop.security.SaslRpcClient;
-import org.apache.hadoop.security.SaslRpcServer;
+import org.apache.hadoop.security.*;
 import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
 import org.apache.hadoop.security.SaslRpcServer.QualityOfProtection;
-import org.apache.hadoop.security.SecurityInfo;
-import org.apache.hadoop.security.SecurityUtil;
-import org.apache.hadoop.security.TestUserGroupInformation;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
-import org.apache.hadoop.security.token.SecretManager;
+import org.apache.hadoop.security.token.*;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
-import org.apache.hadoop.security.token.Token;
-import org.apache.hadoop.security.token.TokenIdentifier;
-import org.apache.hadoop.security.token.TokenInfo;
-import org.apache.hadoop.security.token.TokenSelector;
 import org.apache.log4j.Level;
 import org.junit.Assert;
 import org.junit.Before;
@@ -308,7 +296,16 @@ public class TestSaslRPC extends TestRpcBase {
       assertEquals(TOKEN, authMethod);
       //QOP must be auth
       assertEquals(expectedQop.saslQop,
-                   RPC.getConnectionIdForProxy(proxy).getSaslQop());            
+                   RPC.getConnectionIdForProxy(proxy).getSaslQop());
+      int n = 0;
+      for (Connection connection : server.getConnections()) {
+        // only qop auth should dispose of the sasl server
+        boolean hasServer = (connection.saslServer != null);
+        assertTrue("qop:" + expectedQop + " hasServer:" + hasServer,
+            (expectedQop == QualityOfProtection.AUTHENTICATION) ^ hasServer);
+        n++;
+      }
+      assertTrue(n > 0);
       proxy.ping(null, newEmptyRequest());
     } finally {
       stop(server, proxy);

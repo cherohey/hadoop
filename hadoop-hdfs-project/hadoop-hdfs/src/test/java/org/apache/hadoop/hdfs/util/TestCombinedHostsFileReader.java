@@ -23,6 +23,7 @@ import java.io.FileWriter;
 import java.util.Set;
 
 import org.apache.hadoop.hdfs.protocol.DatanodeAdminProperties;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.Before;
 import org.junit.After;
 import org.junit.Test;
@@ -35,8 +36,8 @@ import static org.junit.Assert.assertEquals;
 public class TestCombinedHostsFileReader {
 
   // Using /test/build/data/tmp directory to store temporary files
-  static final String HOSTS_TEST_DIR = new File(System.getProperty(
-      "test.build.data", "/tmp")).getAbsolutePath();
+  static final String HOSTS_TEST_DIR = GenericTestUtils.getTestDir()
+      .getAbsolutePath();
   File NEW_FILE = new File(HOSTS_TEST_DIR, "dfs.hosts.new.json");
 
   static final String TEST_CACHE_DATA_DIR =
@@ -61,7 +62,7 @@ public class TestCombinedHostsFileReader {
   public void testLoadExistingJsonFile() throws Exception {
     Set<DatanodeAdminProperties> all =
         CombinedHostsFileReader.readFile(EXISTING_FILE.getAbsolutePath());
-    assertEquals(5, all.size());
+    assertEquals(7, all.size());
   }
 
   /*

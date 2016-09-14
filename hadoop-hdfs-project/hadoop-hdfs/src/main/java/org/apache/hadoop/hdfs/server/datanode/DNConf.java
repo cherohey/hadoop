@@ -64,6 +64,8 @@ import org.apache.hadoop.hdfs.protocol.datatransfer.TrustedChannelResolver;
 import org.apache.hadoop.hdfs.protocol.datatransfer.sasl.DataTransferSaslUtil;
 import org.apache.hadoop.security.SaslPropertiesResolver;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * Simple class encapsulating all of the configuration that the DataNode
  * loads at startup time.
@@ -76,6 +78,7 @@ public class DNConf {
   final int socketKeepaliveTimeout;
   private final int transferSocketSendBufferSize;
   private final int transferSocketRecvBufferSize;
+  private final boolean tcpNoDelay;
 
   final boolean transferToAllowed;
   final boolean dropCacheBehindWrites;
@@ -116,6 +119,7 @@ public class DNConf {
 
   private final int volFailuresTolerated;
   private final int volsConfigured;
+  private final int maxDataLength;
 
   public DNConf(Configuration conf) {
     this.conf = conf;
@@ -132,6 +136,9 @@ public class DNConf {
     this.transferSocketRecvBufferSize = conf.getInt(
         DFSConfigKeys.DFS_DATANODE_TRANSFER_SOCKET_RECV_BUFFER_SIZE_KEY,
         DFSConfigKeys.DFS_DATANODE_TRANSFER_SOCKET_RECV_BUFFER_SIZE_DEFAULT);
+    this.tcpNoDelay = conf.getBoolean(
+        DFSConfigKeys.DFS_DATA_TRANSFER_SERVER_TCPNODELAY,
+        DFSConfigKeys.DFS_DATA_TRANSFER_SERVER_TCPNODELAY_DEFAULT);
 
     /* Based on results on different platforms, we might need set the default
      * to false on some of them. */
@@ -145,6 +152,8 @@ public class DNConf {
     readaheadLength = conf.getLong(
         HdfsClientConfigKeys.DFS_DATANODE_READAHEAD_BYTES_KEY,
         HdfsClientConfigKeys.DFS_DATANODE_READAHEAD_BYTES_DEFAULT);
+    maxDataLength = conf.getInt(DFSConfigKeys.IPC_MAXIMUM_DATA_LENGTH,
+        DFSConfigKeys.IPC_MAXIMUM_DATA_LENGTH_DEFAULT);
     dropCacheBehindWrites = conf.getBoolean(
         DFSConfigKeys.DFS_DATANODE_DROP_CACHE_BEHIND_WRITES_KEY,
         DFSConfigKeys.DFS_DATANODE_DROP_CACHE_BEHIND_WRITES_DEFAULT);
@@ -177,9 +186,9 @@ public class DNConf {
         DFSConfigKeys.DFS_DATANODE_SLOW_IO_WARNING_THRESHOLD_KEY,
         DFSConfigKeys.DFS_DATANODE_SLOW_IO_WARNING_THRESHOLD_DEFAULT);
 
-    long initBRDelay = conf.getLong(
+    long initBRDelay = conf.getTimeDuration(
         DFS_BLOCKREPORT_INITIAL_DELAY_KEY,
-        DFS_BLOCKREPORT_INITIAL_DELAY_DEFAULT) * 1000L;
+        DFS_BLOCKREPORT_INITIAL_DELAY_DEFAULT, TimeUnit.SECONDS) * 1000L;
     if (initBRDelay >= blockReportInterval) {
       initBRDelay = 0;
       DataNode.LOG.info("dfs.blockreport.initialDelay is "
@@ -188,12 +197,12 @@ public class DNConf {
     }
     initialBlockReportDelayMs = initBRDelay;
     
-    heartBeatInterval = conf.getLong(DFS_HEARTBEAT_INTERVAL_KEY,
-        DFS_HEARTBEAT_INTERVAL_DEFAULT) * 1000L;
+    heartBeatInterval = conf.getTimeDuration(DFS_HEARTBEAT_INTERVAL_KEY,
+        DFS_HEARTBEAT_INTERVAL_DEFAULT, TimeUnit.SECONDS) * 1000L;
     long confLifelineIntervalMs =
         conf.getLong(DFS_DATANODE_LIFELINE_INTERVAL_SECONDS_KEY,
-        3 * conf.getLong(DFS_HEARTBEAT_INTERVAL_KEY,
-            DFS_HEARTBEAT_INTERVAL_DEFAULT)) * 1000L;
+        3 * conf.getTimeDuration(DFS_HEARTBEAT_INTERVAL_KEY,
+        DFS_HEARTBEAT_INTERVAL_DEFAULT, TimeUnit.SECONDS)) * 1000L;
     if (confLifelineIntervalMs <= heartBeatInterval) {
       confLifelineIntervalMs = 3 * heartBeatInterval;
       DataNode.LOG.warn(
@@ -238,9 +247,9 @@ public class DNConf {
         DFS_DATANODE_NON_LOCAL_LAZY_PERSIST,
         DFS_DATANODE_NON_LOCAL_LAZY_PERSIST_DEFAULT);
 
-    this.bpReadyTimeout = conf.getLong(
+    this.bpReadyTimeout = conf.getTimeDuration(
         DFS_DATANODE_BP_READY_TIMEOUT_KEY,
-        DFS_DATANODE_BP_READY_TIMEOUT_DEFAULT);
+        DFS_DATANODE_BP_READY_TIMEOUT_DEFAULT, TimeUnit.SECONDS);
 
     this.volFailuresTolerated =
         conf.getInt(DFSConfigKeys.DFS_DATANODE_FAILED_VOLUMES_TOLERATED_KEY,
@@ -361,6 +370,10 @@ public class DNConf {
     return transferSocketSendBufferSize;
   }
 
+  public boolean getDataTransferServerTcpNoDelay() {
+    return tcpNoDelay;
+  }
+
   public long getBpReadyTimeout() {
     return bpReadyTimeout;
   }
@@ -380,5 +393,9 @@ public class DNConf {
 
   public int getVolsConfigured() {
     return volsConfigured;
+  }
+
+  int getMaxDataLength() {
+    return maxDataLength;
   }
 }

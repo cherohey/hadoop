@@ -306,6 +306,13 @@ function hadoop_bootstrap
   HADOOP_TOOLS_DIR=${HADOOP_TOOLS_DIR:-"share/hadoop/tools"}
   HADOOP_TOOLS_LIB_JARS_DIR=${HADOOP_TOOLS_LIB_JARS_DIR:-"${HADOOP_TOOLS_DIR}/lib"}
 
+  # by default, whatever we are about to run doesn't support
+  # daemonization
+  HADOOP_SUBCMD_SUPPORTDAEMONIZATION=false
+
+  # shellcheck disable=SC2034
+  HADOOP_SUBCMD_SECURESERVICE=false
+
   # usage output set to zero
   hadoop_reset_usage
 
@@ -596,31 +603,31 @@ function hadoop_basic_init
   HADOOP_ROOT_LOGGER=${HADOOP_ROOT_LOGGER:-${HADOOP_LOGLEVEL},console}
   HADOOP_DAEMON_ROOT_LOGGER=${HADOOP_DAEMON_ROOT_LOGGER:-${HADOOP_LOGLEVEL},RFA}
   HADOOP_SECURITY_LOGGER=${HADOOP_SECURITY_LOGGER:-INFO,NullAppender}
-  HADOOP_SSH_OPTS=${HADOOP_SSH_OPTS:-"-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10s"}
+  HADOOP_SSH_OPTS=${HADOOP_SSH_OPTS-"-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10s"}
   HADOOP_SECURE_LOG_DIR=${HADOOP_SECURE_LOG_DIR:-${HADOOP_LOG_DIR}}
   HADOOP_SECURE_PID_DIR=${HADOOP_SECURE_PID_DIR:-${HADOOP_PID_DIR}}
   HADOOP_SSH_PARALLEL=${HADOOP_SSH_PARALLEL:-10}
 }
 
-## @description  Set the slave support information to the contents
+## @description  Set the worker support information to the contents
 ## @description  of `filename`
 ## @audience     public
 ## @stability    stable
 ## @replaceable  no
 ## @param        filename
 ## @return       will exit if file does not exist
-function hadoop_populate_slaves_file
+function hadoop_populate_workers_file
 {
-  local slavesfile=$1
+  local workersfile=$1
   shift
-  if [[ -f "${slavesfile}" ]]; then
+  if [[ -f "${workersfile}" ]]; then
     # shellcheck disable=2034
-    HADOOP_SLAVES="${slavesfile}"
-  elif [[ -f "${HADOOP_CONF_DIR}/${slavesfile}" ]]; then
+    HADOOP_WORKERS="${workersfile}"
+  elif [[ -f "${HADOOP_CONF_DIR}/${workersfile}" ]]; then
     # shellcheck disable=2034
-    HADOOP_SLAVES="${HADOOP_CONF_DIR}/${slavesfile}"
+    HADOOP_WORKERS="${HADOOP_CONF_DIR}/${workersfile}"
   else
-    hadoop_error "ERROR: Cannot find hosts file \"${slavesfile}\""
+    hadoop_error "ERROR: Cannot find hosts file \"${workersfile}\""
     hadoop_exit_with_usage 1
   fi
 }
@@ -669,14 +676,14 @@ function hadoop_actual_ssh
 {
   # we are passing this function to xargs
   # should get hostname followed by rest of command line
-  local slave=$1
+  local worker=$1
   shift
 
   # shellcheck disable=SC2086
-  ssh ${HADOOP_SSH_OPTS} ${slave} $"${@// /\\ }" 2>&1 | sed "s/^/$slave: /"
+  ssh ${HADOOP_SSH_OPTS} ${worker} $"${@// /\\ }" 2>&1 | sed "s/^/$worker: /"
 }
 
-## @description  Connect to ${HADOOP_SLAVES} or ${HADOOP_SLAVE_NAMES}
+## @description  Connect to ${HADOOP_WORKERS} or ${HADOOP_WORKER_NAMES}
 ## @description  and execute command.
 ## @audience     private
 ## @stability    evolving
@@ -687,45 +694,52 @@ function hadoop_connect_to_hosts
 {
   # shellcheck disable=SC2124
   local params="$@"
-  local slave_file
+  local worker_file
   local tmpslvnames
 
   #
   # ssh (or whatever) to a host
   #
   # User can specify hostnames or a file where the hostnames are (not both)
-  if [[ -n "${HADOOP_SLAVES}" && -n "${HADOOP_SLAVE_NAMES}" ]] ; then
-    hadoop_error "ERROR: Both HADOOP_SLAVES and HADOOP_SLAVE_NAME were defined. Aborting."
+  if [[ -n "${HADOOP_WORKERS}" && -n "${HADOOP_WORKER_NAMES}" ]] ; then
+    hadoop_error "ERROR: Both HADOOP_WORKERS and HADOOP_WORKER_NAMES were defined. Aborting."
     exit 1
-  elif [[ -z "${HADOOP_SLAVE_NAMES}" ]]; then
-    slave_file=${HADOOP_SLAVES:-${HADOOP_CONF_DIR}/slaves}
+  elif [[ -z "${HADOOP_WORKER_NAMES}" ]]; then
+    if [[ -n "${HADOOP_WORKERS}" ]]; then
+      worker_file=${HADOOP_WORKERS}
+    elif [[ -f "${HADOOP_CONF_DIR}/workers" ]]; then
+      worker_file=${HADOOP_CONF_DIR}/workers
+    elif [[ -f "${HADOOP_CONF_DIR}/slaves" ]]; then
+      hadoop_error "WARNING: 'slaves' file has been deprecated. Please use 'workers' file instead."
+      worker_file=${HADOOP_CONF_DIR}/slaves
+    fi
   fi
 
   # if pdsh is available, let's use it.  otherwise default
   # to a loop around ssh.  (ugh)
   if [[ -e '/usr/bin/pdsh' ]]; then
-    if [[ -z "${HADOOP_SLAVE_NAMES}" ]] ; then
+    if [[ -z "${HADOOP_WORKER_NAMES}" ]] ; then
       # if we were given a file, just let pdsh deal with it.
       # shellcheck disable=SC2086
       PDSH_SSH_ARGS_APPEND="${HADOOP_SSH_OPTS}" pdsh \
-      -f "${HADOOP_SSH_PARALLEL}" -w ^"${slave_file}" $"${@// /\\ }" 2>&1
+      -f "${HADOOP_SSH_PARALLEL}" -w ^"${worker_file}" $"${@// /\\ }" 2>&1
     else
       # no spaces allowed in the pdsh arg host list
       # shellcheck disable=SC2086
-      tmpslvnames=$(echo ${SLAVE_NAMES} | tr -s ' ' ,)
+      tmpslvnames=$(echo ${HADOOP_WORKER_NAMES} | tr -s ' ' ,)
       PDSH_SSH_ARGS_APPEND="${HADOOP_SSH_OPTS}" pdsh \
         -f "${HADOOP_SSH_PARALLEL}" \
         -w "${tmpslvnames}" $"${@// /\\ }" 2>&1
     fi
   else
-    if [[ -z "${HADOOP_SLAVE_NAMES}" ]]; then
-      HADOOP_SLAVE_NAMES=$(sed 's/#.*$//;/^$/d' "${slave_file}")
+    if [[ -z "${HADOOP_WORKER_NAMES}" ]]; then
+      HADOOP_WORKER_NAMES=$(sed 's/#.*$//;/^$/d' "${worker_file}")
     fi
     hadoop_connect_to_hosts_without_pdsh "${params}"
   fi
 }
 
-## @description  Connect to ${SLAVE_NAMES} and execute command
+## @description  Connect to ${HADOOP_WORKER_NAMES} and execute command
 ## @description  under the environment which does not support pdsh.
 ## @audience     private
 ## @stability    evolving
@@ -736,24 +750,24 @@ function hadoop_connect_to_hosts_without_pdsh
 {
   # shellcheck disable=SC2124
   local params="$@"
-  local slaves=(${HADOOP_SLAVE_NAMES})
-  for (( i = 0; i < ${#slaves[@]}; i++ ))
+  local workers=(${HADOOP_WORKER_NAMES})
+  for (( i = 0; i < ${#workers[@]}; i++ ))
   do
     if (( i != 0 && i % HADOOP_SSH_PARALLEL == 0 )); then
       wait
     fi
     # shellcheck disable=SC2086
-    hadoop_actual_ssh "${slaves[$i]}" ${params} &
+    hadoop_actual_ssh "${workers[$i]}" ${params} &
   done
   wait
 }
 
-## @description  Utility routine to handle --slaves mode
+## @description  Utility routine to handle --workers mode
 ## @audience     private
 ## @stability    evolving
 ## @replaceable  yes
 ## @param        commandarray
-function hadoop_common_slave_mode_execute
+function hadoop_common_worker_mode_execute
 {
   #
   # input should be the command line as given by the user
@@ -761,13 +775,13 @@ function hadoop_common_slave_mode_execute
   #
   local argv=("$@")
 
-  # if --slaves is still on the command line, remove it
+  # if --workers is still on the command line, remove it
   # to prevent loops
   # Also remove --hostnames and --hosts along with arg values
   local argsSize=${#argv[@]};
   for (( i = 0; i < argsSize; i++ ))
   do
-    if [[ "${argv[$i]}" =~ ^--slaves$ ]]; then
+    if [[ "${argv[$i]}" =~ ^--workers$ ]]; then
       unset argv[$i]
     elif [[ "${argv[$i]}" =~ ^--hostnames$ ]] ||
       [[ "${argv[$i]}" =~ ^--hosts$ ]]; then
@@ -1220,6 +1234,20 @@ function hadoop_translate_cygwin_path
       #shellcheck disable=SC2016
       eval "$1"='$(cygpath -w "${!1}" 2>/dev/null)'
     fi
+  fi
+}
+
+## @description  Adds the HADOOP_CLIENT_OPTS variable to
+## @description  HADOOP_OPTS if HADOOP_SUBCMD_SUPPORTDAEMONIZATION is false
+## @audience     public
+## @stability    stable
+## @replaceable  yes
+function hadoop_add_client_opts
+{
+  if [[ "${HADOOP_SUBCMD_SUPPORTDAEMONIZATION}" = false
+     || -z "${HADOOP_SUBCMD_SUPPORTDAEMONIZATION}" ]]; then
+    hadoop_debug "Appending HADOOP_CLIENT_OPTS onto HADOOP_OPTS"
+    HADOOP_OPTS="${HADOOP_OPTS} ${HADOOP_CLIENT_OPTS}"
   fi
 }
 
@@ -1956,14 +1984,127 @@ function hadoop_secure_daemon_handler
 ## @return       will exit on failure conditions
 function hadoop_verify_user
 {
-  local command=$1
-  local uservar="HADOOP_${command}_USER"
+  declare program=$1
+  declare command=$2
+  declare uprogram
+  declare ucommand
+  declare uvar
 
-  if [[ -n ${!uservar} ]]; then
-    if [[ ${!uservar} !=  "${USER}" ]]; then
-      hadoop_error "ERROR: ${command} can only be executed by ${!uservar}."
+  if [[ -z "${BASH_VERSINFO[0]}" ]] \
+     || [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    uprogram=$(echo "${program}" | tr '[:lower:]' '[:upper:]')
+    ucommand=$(echo "${command}" | tr '[:lower:]' '[:upper:]')
+  else
+    uprogram=${program^^}
+    ucommand=${command^^}
+  fi
+
+  uvar="${uprogram}_${ucommand}_USER"
+
+  if [[ -n ${!uvar} ]]; then
+    if [[ ${!uvar} !=  "${USER}" ]]; then
+      hadoop_error "ERROR: ${command} can only be executed by ${!uvar}."
       exit 1
     fi
+  fi
+}
+
+## @description  Add custom (program)_(command)_OPTS to HADOOP_OPTS.
+## @description  Also handles the deprecated cases from pre-3.x.
+## @audience     public
+## @stability    stable
+## @replaceable  yes
+## @param        program
+## @param        subcommand
+## @return       will exit on failure conditions
+function hadoop_subcommand_opts
+{
+  declare program=$1
+  declare command=$2
+  declare uvar
+  declare depvar
+  declare uprogram
+  declare ucommand
+
+  if [[ -z "${program}" || -z "${command}" ]]; then
+    return 1
+  fi
+
+  # bash 4 and up have built-in ways to upper and lower
+  # case the contents of vars.  This is faster than
+  # calling tr.
+
+  if [[ -z "${BASH_VERSINFO[0]}" ]] \
+     || [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    uprogram=$(echo "${program}" | tr '[:lower:]' '[:upper:]')
+    ucommand=$(echo "${command}" | tr '[:lower:]' '[:upper:]')
+  else
+    uprogram=${program^^}
+    ucommand=${command^^}
+  fi
+
+  uvar="${uprogram}_${ucommand}_OPTS"
+
+  # Let's handle all of the deprecation cases early
+  # HADOOP_NAMENODE_OPTS -> HDFS_NAMENODE_OPTS
+
+  depvar="HADOOP_${ucommand}_OPTS"
+
+  if [[ "${depvar}" != "${uvar}" ]]; then
+    if [[ -n "${!depvar}" ]]; then
+      hadoop_deprecate_envvar "${depvar}" "${uvar}"
+    fi
+  fi
+
+  if [[ -n ${!uvar} ]]; then
+    hadoop_debug "Appending ${uvar} onto HADOOP_OPTS"
+    HADOOP_OPTS="${HADOOP_OPTS} ${!uvar}"
+    return 0
+  fi
+}
+
+## @description  Add custom (program)_(command)_SECURE_EXTRA_OPTS to HADOOP_OPTS.
+## @description  This *does not* handle the pre-3.x deprecated cases
+## @audience     public
+## @stability    stable
+## @replaceable  yes
+## @param        program
+## @param        subcommand
+## @return       will exit on failure conditions
+function hadoop_subcommand_secure_opts
+{
+  declare program=$1
+  declare command=$2
+  declare uvar
+  declare uprogram
+  declare ucommand
+
+  if [[ -z "${program}" || -z "${command}" ]]; then
+    return 1
+  fi
+
+  # bash 4 and up have built-in ways to upper and lower
+  # case the contents of vars.  This is faster than
+  # calling tr.
+
+  if [[ -z "${BASH_VERSINFO[0]}" ]] \
+     || [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    uprogram=$(echo "${program}" | tr '[:lower:]' '[:upper:]')
+    ucommand=$(echo "${command}" | tr '[:lower:]' '[:upper:]')
+  else
+    uprogram=${program^^}
+    ucommand=${command^^}
+  fi
+
+  # HDFS_DATANODE_SECURE_EXTRA_OPTS
+  # HDFS_NFS3_SECURE_EXTRA_OPTS
+  # ...
+  uvar="${uprogram}_${ucommand}_SECURE_EXTRA_OPTS"
+
+  if [[ -n ${!uvar} ]]; then
+    hadoop_debug "Appending ${uvar} onto HADOOP_OPTS"
+    HADOOP_OPTS="${HADOOP_OPTS} ${!uvar}"
+    return 0
   fi
 }
 
@@ -2051,13 +2192,13 @@ function hadoop_parse_args
       --hostnames)
         shift
         # shellcheck disable=SC2034
-        HADOOP_SLAVE_NAMES="$1"
+        HADOOP_WORKER_NAMES="$1"
         shift
         ((HADOOP_PARSE_COUNTER=HADOOP_PARSE_COUNTER+2))
       ;;
       --hosts)
         shift
-        hadoop_populate_slaves_file "$1"
+        hadoop_populate_workers_file "$1"
         shift
         ((HADOOP_PARSE_COUNTER=HADOOP_PARSE_COUNTER+2))
       ;;
@@ -2068,10 +2209,10 @@ function hadoop_parse_args
         shift
         ((HADOOP_PARSE_COUNTER=HADOOP_PARSE_COUNTER+2))
       ;;
-      --slaves)
+      --workers)
         shift
         # shellcheck disable=SC2034
-        HADOOP_SLAVE_MODE=true
+        HADOOP_WORKER_MODE=true
         ((HADOOP_PARSE_COUNTER=HADOOP_PARSE_COUNTER+1))
       ;;
       *)

@@ -43,7 +43,6 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ActiveUsersManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerAppUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.DominantResourceFairnessPolicy;
 import org.apache.hadoop.yarn.util.resource.Resources;
 
 @Private
@@ -265,29 +264,27 @@ public class FSLeafQueue extends FSQueue {
   public void updateDemand() {
     // Compute demand by iterating through apps in the queue
     // Limit demand to maxResources
-    Resource maxRes = scheduler.getAllocationConfiguration()
-        .getMaxResources(getName());
     demand = Resources.createResource(0);
     readLock.lock();
     try {
       for (FSAppAttempt sched : runnableApps) {
-        if (Resources.equals(demand, maxRes)) {
+        if (Resources.equals(demand, maxShare)) {
           break;
         }
-        updateDemandForApp(sched, maxRes);
+        updateDemandForApp(sched, maxShare);
       }
       for (FSAppAttempt sched : nonRunnableApps) {
-        if (Resources.equals(demand, maxRes)) {
+        if (Resources.equals(demand, maxShare)) {
           break;
         }
-        updateDemandForApp(sched, maxRes);
+        updateDemandForApp(sched, maxShare);
       }
     } finally {
       readLock.unlock();
     }
     if (LOG.isDebugEnabled()) {
       LOG.debug("The updated demand for " + getName() + " is " + demand
-          + "; the max is " + maxRes);
+          + "; the max is " + maxShare);
       LOG.debug("The updated fairshare for " + getName() + " is "
           + getFairShare());
     }
@@ -332,7 +329,7 @@ public class FSLeafQueue extends FSQueue {
       readLock.unlock();
     }
     for (FSAppAttempt sched : pendingForResourceApps) {
-      if (SchedulerAppUtils.isBlacklisted(sched, node, LOG)) {
+      if (SchedulerAppUtils.isPlaceBlacklisted(sched, node, LOG)) {
         continue;
       }
       assigned = sched.assignContainer(node);
@@ -482,35 +479,33 @@ public class FSLeafQueue extends FSQueue {
 
   /**
    * Check whether this queue can run this application master under the
-   * maxAMShare limit. For FIFO and FAIR policies, check if the VCore usage
-   * takes up the entire cluster or maxResources for the queue.
+   * maxAMShare limit.
    * @param amResource
    * @return true if this queue can run
    */
   public boolean canRunAppAM(Resource amResource) {
-    float maxAMShare =
-        scheduler.getAllocationConfiguration().getQueueMaxAMShare(getName());
     if (Math.abs(maxAMShare - -1.0f) < 0.0001) {
       return true;
     }
-    Resource maxAMResource = Resources.multiply(getFairShare(), maxAMShare);
-    Resource ifRunAMResource = Resources.add(amResourceUsage, amResource);
 
-    boolean overMaxAMShareLimit = policy
-            .checkIfAMResourceUsageOverLimit(ifRunAMResource, maxAMResource);
-
-    // For fair policy and fifo policy which doesn't check VCore usages,
-    // additionally check if the AM takes all available VCores or
-    // over maxResource to avoid deadlock.
-    if (!overMaxAMShareLimit && !policy.equals(
-        SchedulingPolicy.getInstance(DominantResourceFairnessPolicy.class))) {
-      overMaxAMShareLimit =
-         isVCoresOverMaxResource(ifRunAMResource.getVirtualCores()) ||
-         ifRunAMResource.getVirtualCores() >=
-         scheduler.getRootQueueMetrics().getAvailableVirtualCores();
+    // If FairShare is zero, use min(maxShare, available resource) to compute
+    // maxAMResource
+    Resource maxResource = Resources.clone(getFairShare());
+    if (maxResource.getMemorySize() == 0) {
+      maxResource.setMemorySize(
+          Math.min(scheduler.getRootQueueMetrics().getAvailableMB(),
+                   getMaxShare().getMemorySize()));
     }
 
-    return !overMaxAMShareLimit;
+    if (maxResource.getVirtualCores() == 0) {
+      maxResource.setVirtualCores(Math.min(
+          scheduler.getRootQueueMetrics().getAvailableVirtualCores(),
+          getMaxShare().getVirtualCores()));
+    }
+
+    Resource maxAMResource = Resources.multiply(maxResource, maxAMShare);
+    Resource ifRunAMResource = Resources.add(amResourceUsage, amResource);
+    return Resources.fitsIn(ifRunAMResource, maxAMResource);
   }
 
   public void addAMResourceUsage(Resource amResource) {
@@ -544,8 +539,7 @@ public class FSLeafQueue extends FSQueue {
    * @param weight queue weight
    */
   public void setWeights(float weight) {
-    scheduler.getAllocationConfiguration().setQueueWeight(getName(),
-        new ResourceWeights(weight));
+    this.weights = new ResourceWeights(weight);
   }
 
   /**

@@ -741,7 +741,7 @@ public class TestNodeManagerResync {
       ContainerLaunchContext containerLaunchContext =
           recordFactory.newRecordInstance(ContainerLaunchContext.class);
       URL resource_alpha =
-          ConverterUtils.getYarnUrlFromPath(localFS
+          URL.fromPath(localFS
               .makeQualified(new Path(scriptFile.getAbsolutePath())));
       LocalResource rsrc_alpha =
           recordFactory.newRecordInstance(LocalResource.class);
@@ -875,7 +875,7 @@ public class TestNodeManagerResync {
         ApplicationAttemptId.newInstance(applicationId, 1);
     ContainerId containerId = ContainerId.newContainerId(applicationAttemptId, id);
     NMContainerStatus containerReport =
-        NMContainerStatus.newInstance(containerId, containerState,
+        NMContainerStatus.newInstance(containerId, 0, containerState,
           Resource.newInstance(1024, 1), "recover container", 0,
           Priority.newInstance(10), 0);
     return containerReport;

@@ -18,18 +18,20 @@
 
 package org.apache.hadoop.yarn.server.nodemanager.containermanager.container;
 
-import java.util.List;
-import java.util.Map;
-
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
+import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.security.ContainerTokenIdentifier;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ResourceSet;
+
+import java.util.List;
+import java.util.Map;
 
 public interface Container extends EventHandler<ContainerEvent> {
 
@@ -67,6 +69,11 @@ public interface Container extends EventHandler<ContainerEvent> {
 
   void setLogDir(String logDir);
 
+  void setIpAndHost(String[] ipAndHost);
+
   String toString();
 
+  Priority getPriority();
+
+  ResourceSet getResourceSet();
 }

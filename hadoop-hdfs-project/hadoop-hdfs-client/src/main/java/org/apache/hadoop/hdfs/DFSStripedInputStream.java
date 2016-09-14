@@ -35,12 +35,12 @@ import static org.apache.hadoop.hdfs.util.StripedBlockUtil.AlignedStripe;
 import static org.apache.hadoop.hdfs.util.StripedBlockUtil.StripingChunk;
 import static org.apache.hadoop.hdfs.util.StripedBlockUtil.StripingChunkReadResult;
 
+import org.apache.hadoop.io.ElasticByteBufferPool;
 import org.apache.hadoop.io.erasurecode.CodecUtil;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 
 import org.apache.hadoop.io.erasurecode.ErasureCoderOptions;
 import org.apache.hadoop.io.erasurecode.rawcoder.RawErasureDecoder;
-import org.apache.hadoop.util.DirectBufferPool;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -139,7 +139,7 @@ public class DFSStripedInputStream extends DFSInputStream {
     }
   }
 
-  private static final DirectBufferPool bufferPool = new DirectBufferPool();
+  private static final ByteBufferPool BUFFER_POOL = new ElasticByteBufferPool();
 
   private final BlockReaderInfo[] blockReaders;
   private final int cellSize;
@@ -194,9 +194,14 @@ public class DFSStripedInputStream extends DFSInputStream {
     }
   }
 
+  private boolean useDirectBuffer() {
+    return decoder.preferDirectBuffer();
+  }
+
   private void resetCurStripeBuffer() {
     if (curStripeBuf == null) {
-      curStripeBuf = bufferPool.getBuffer(cellSize * dataBlkNum);
+      curStripeBuf = BUFFER_POOL.getBuffer(useDirectBuffer(),
+          cellSize * dataBlkNum);
     }
     curStripeBuf.clear();
     curStripeRange = new StripeRange(0, 0);
@@ -204,7 +209,8 @@ public class DFSStripedInputStream extends DFSInputStream {
 
   private ByteBuffer getParityBuffer() {
     if (parityBuf == null) {
-      parityBuf = bufferPool.getBuffer(cellSize * parityBlkNum);
+      parityBuf = BUFFER_POOL.getBuffer(useDirectBuffer(),
+          cellSize * parityBlkNum);
     }
     parityBuf.clear();
     return parityBuf;
@@ -235,11 +241,11 @@ public class DFSStripedInputStream extends DFSInputStream {
   public synchronized void close() throws IOException {
     super.close();
     if (curStripeBuf != null) {
-      bufferPool.returnBuffer(curStripeBuf);
+      BUFFER_POOL.putBuffer(curStripeBuf);
       curStripeBuf = null;
     }
     if (parityBuf != null) {
-      bufferPool.returnBuffer(parityBuf);
+      BUFFER_POOL.putBuffer(parityBuf);
       parityBuf = null;
     }
   }
@@ -301,8 +307,8 @@ public class DFSStripedInputStream extends DFSInputStream {
         stripeLimit - stripeBufOffset);
 
     LocatedStripedBlock blockGroup = (LocatedStripedBlock) currentLocatedBlock;
-    AlignedStripe[] stripes = StripedBlockUtil.divideOneStripe(ecPolicy, cellSize,
-        blockGroup, offsetInBlockGroup,
+    AlignedStripe[] stripes = StripedBlockUtil.divideOneStripe(ecPolicy,
+        cellSize, blockGroup, offsetInBlockGroup,
         offsetInBlockGroup + stripeRange.length - 1, curStripeBuf);
     final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
         blockGroup, cellSize, dataBlkNum, parityBlkNum);
@@ -353,11 +359,11 @@ public class DFSStripedInputStream extends DFSInputStream {
       ExtendedBlock currentBlock,
       CorruptedBlocks corruptedBlocks)
       throws IOException {
-    final int targetLength = strategy.buf.remaining();
+    final int targetLength = strategy.getTargetLength();
     int length = 0;
     try {
       while (length < targetLength) {
-        int ret = strategy.doRead(blockReader, 0, 0);
+        int ret = strategy.readFromBlock(blockReader);
         if (ret < 0) {
           throw new IOException("Unexpected EOS from the reader");
         }
@@ -419,13 +425,14 @@ public class DFSStripedInputStream extends DFSInputStream {
   }
 
   @Override
-  protected synchronized int readWithStrategy(ReaderStrategy strategy,
-      int off, int len) throws IOException {
+  protected synchronized int readWithStrategy(ReaderStrategy strategy)
+      throws IOException {
     dfsClient.checkOpen();
     if (closed.get()) {
       throw new IOException("Stream closed");
     }
 
+    int len = strategy.getTargetLength();
     CorruptedBlocks corruptedBlocks = new CorruptedBlocks();
     if (pos < getFileLength()) {
       try {
@@ -446,7 +453,7 @@ public class DFSStripedInputStream extends DFSInputStream {
           if (!curStripeRange.include(getOffsetInBlockGroup())) {
             readOneStripe(corruptedBlocks);
           }
-          int ret = copyToTargetBuf(strategy, off + result, realLen - result);
+          int ret = copyToTargetBuf(strategy, realLen - result);
           result += ret;
           pos += ret;
         }
@@ -464,16 +471,14 @@ public class DFSStripedInputStream extends DFSInputStream {
   /**
    * Copy the data from {@link #curStripeBuf} into the given buffer
    * @param strategy the ReaderStrategy containing the given buffer
-   * @param offset the offset of the given buffer. Used only when strategy is
-   *               a ByteArrayStrategy
    * @param length target length
    * @return number of bytes copied
    */
-  private int copyToTargetBuf(ReaderStrategy strategy, int offset, int length) {
+  private int copyToTargetBuf(ReaderStrategy strategy, int length) {
     final long offsetInBlk = getOffsetInBlockGroup();
     int bufOffset = getStripedBufOffset(offsetInBlk);
     curStripeBuf.position(bufOffset);
-    return strategy.copyFrom(curStripeBuf, offset,
+    return strategy.readFromBuffer(curStripeBuf,
         Math.min(length, curStripeBuf.remaining()));
   }
 
@@ -518,13 +523,13 @@ public class DFSStripedInputStream extends DFSInputStream {
    */
   @Override
   protected void fetchBlockByteRange(LocatedBlock block, long start,
-      long end, byte[] buf, int offset, CorruptedBlocks corruptedBlocks)
+      long end, ByteBuffer buf, CorruptedBlocks corruptedBlocks)
       throws IOException {
     // Refresh the striped block group
     LocatedStripedBlock blockGroup = getBlockGroupAt(block.getStartOffset());
 
     AlignedStripe[] stripes = StripedBlockUtil.divideByteRangeIntoStripes(
-        ecPolicy, cellSize, blockGroup, start, end, buf, offset);
+        ecPolicy, cellSize, blockGroup, start, end, buf);
     CompletionService<Void> readService = new ExecutorCompletionService<>(
         dfsClient.getStripedReadsThreadPool());
     final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
@@ -537,6 +542,7 @@ public class DFSStripedInputStream extends DFSInputStream {
             blks, preaderInfos, corruptedBlocks);
         preader.readStripe();
       }
+      buf.position(buf.position() + (int)(end - start + 1));
     } finally {
       for (BlockReaderInfo preaderInfo : preaderInfos) {
         closeReader(preaderInfo);
@@ -693,16 +699,17 @@ public class DFSStripedInputStream extends DFSInputStream {
     }
 
     private ByteBufferStrategy[] getReadStrategies(StripingChunk chunk) {
-      if (chunk.byteBuffer != null) {
-        ByteBufferStrategy strategy = new ByteBufferStrategy(chunk.byteBuffer);
+      if (chunk.useByteBuffer()) {
+        ByteBufferStrategy strategy = new ByteBufferStrategy(
+            chunk.getByteBuffer(), readStatistics, dfsClient);
         return new ByteBufferStrategy[]{strategy};
       } else {
         ByteBufferStrategy[] strategies =
-            new ByteBufferStrategy[chunk.byteArray.getOffsets().length];
+            new ByteBufferStrategy[chunk.getChunkBuffer().getSlices().size()];
         for (int i = 0; i < strategies.length; i++) {
-          ByteBuffer buffer = ByteBuffer.wrap(chunk.byteArray.buf(),
-              chunk.byteArray.getOffsets()[i], chunk.byteArray.getLengths()[i]);
-          strategies[i] = new ByteBufferStrategy(buffer);
+          ByteBuffer buffer = chunk.getChunkBuffer().getSlice(i);
+          strategies[i] =
+              new ByteBufferStrategy(buffer, readStatistics, dfsClient);
         }
         return strategies;
       }
@@ -807,7 +814,7 @@ public class DFSStripedInputStream extends DFSInputStream {
   }
 
   class PositionStripeReader extends StripeReader {
-    private byte[][] decodeInputs = null;
+    private ByteBuffer[] decodeInputs = null;
 
     PositionStripeReader(CompletionService<Void> service,
         AlignedStripe alignedStripe, LocatedBlock[] targetBlocks,
@@ -829,8 +836,6 @@ public class DFSStripedInputStream extends DFSInputStream {
       Preconditions.checkState(index >= dataBlkNum &&
           alignedStripe.chunks[index] == null);
       alignedStripe.chunks[index] = new StripingChunk(decodeInputs[index]);
-      alignedStripe.chunks[index].addByteArraySlice(0,
-          (int) alignedStripe.getSpanInBlock());
       return true;
     }
 

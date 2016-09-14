@@ -55,6 +55,7 @@ import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
 import org.apache.hadoop.security.ssl.KeyStoreTestUtil;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -78,12 +79,12 @@ public class TestSecureNNWithQJM {
   private MiniJournalCluster mjc;
 
   @Rule
-  public Timeout timeout = new Timeout(30000);
+  public Timeout timeout = new Timeout(180000);
 
   @BeforeClass
   public static void init() throws Exception {
-    baseDir = new File(System.getProperty("test.build.dir", "target/test-dir"),
-      TestSecureNNWithQJM.class.getSimpleName());
+    baseDir =
+        GenericTestUtils.getTestDir(TestSecureNNWithQJM.class.getSimpleName());
     FileUtil.fullyDelete(baseDir);
     assertTrue(baseDir.mkdirs());
 

@@ -349,6 +349,16 @@ public class ResourceMgrDelegate extends YarnClient {
   }
 
   @Override
+  public List<ApplicationReport> getApplications(
+      Set<String> applicationTypes,
+      EnumSet<YarnApplicationState> applicationStates,
+      Set<String> applicationTags)
+      throws YarnException, IOException {
+    return client.getApplications(
+        applicationTypes, applicationStates, applicationTags);
+  }
+
+  @Override
   public List<ApplicationReport> getApplications(Set<String> queues,
       Set<String> users, Set<String> applicationTypes,
       EnumSet<YarnApplicationState> applicationStates) throws YarnException,
@@ -496,8 +506,9 @@ public class ResourceMgrDelegate extends YarnClient {
   }
 
   @Override
-  public void signalContainer(ContainerId containerId, SignalContainerCommand command)
+  public void signalToContainer(ContainerId containerId,
+      SignalContainerCommand command)
       throws YarnException, IOException {
-    client.signalContainer(containerId, command);
+    client.signalToContainer(containerId, command);
   }
 }

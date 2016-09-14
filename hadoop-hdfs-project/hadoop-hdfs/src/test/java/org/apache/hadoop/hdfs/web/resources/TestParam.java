@@ -164,7 +164,8 @@ public class TestParam {
   @Test
   public void testPermissionParam() {
     final PermissionParam p = new PermissionParam(PermissionParam.DEFAULT);
-    Assert.assertEquals(new FsPermission((short)0755), p.getFsPermission());
+    Assert.assertEquals(new FsPermission((short)0755), p.getDirFsPermission());
+    Assert.assertEquals(new FsPermission((short)0644), p.getFileFsPermission());
 
     new PermissionParam("0");
 
@@ -452,5 +453,12 @@ public class TestParam {
     } catch(IllegalArgumentException e) {
       LOG.info("EXPECTED: " + e);
     }
+  }
+
+  @Test
+  public void testStartAfterParam() throws Exception {
+    String s = "/helloWorld";
+    StartAfterParam param = new StartAfterParam(s);
+    Assert.assertEquals(s, param.getValue());
   }
 }

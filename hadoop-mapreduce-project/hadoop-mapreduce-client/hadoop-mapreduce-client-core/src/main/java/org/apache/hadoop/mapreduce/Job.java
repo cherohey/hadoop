@@ -95,10 +95,13 @@ public class Job extends JobContextImpl implements JobContext {
   static final int DEFAULT_MONITOR_POLL_INTERVAL = 1000;
 
   public static final String USED_GENERIC_PARSER = 
-    "mapreduce.client.genericoptionsparser.used";
+      "mapreduce.client.genericoptionsparser.used";
   public static final String SUBMIT_REPLICATION = 
-    "mapreduce.client.submit.file.replication";
+      "mapreduce.client.submit.file.replication";
   public static final int DEFAULT_SUBMIT_REPLICATION = 10;
+  public static final String USE_WILDCARD_FOR_LIBJARS =
+      "mapreduce.client.libjars.wildcard";
+  public static final boolean DEFAULT_USE_WILDCARD_FOR_LIBJARS = true;
 
   @InterfaceStability.Evolving
   public static enum TaskStatusFilter { NONE, KILLED, FAILED, SUCCEEDED, ALL }
@@ -419,7 +422,7 @@ public class Job extends JobContextImpl implements JobContext {
    * The user-specified job name.
    */
   public String getJobName() {
-    if (state == JobState.DEFINE) {
+    if (state == JobState.DEFINE || status == null) {
       return super.getJobName();
     }
     ensureState(JobState.RUNNING);

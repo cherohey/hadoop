@@ -40,7 +40,6 @@ import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationResourceUsageReport;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.api.records.ContainerResourceChangeRequest;
 import org.apache.hadoop.yarn.api.records.ContainerState;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.NodeId;
@@ -48,6 +47,7 @@ import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceOption;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
+import org.apache.hadoop.yarn.api.records.UpdateContainerRequest;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.InvalidResourceRequestException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
@@ -71,6 +71,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerRecoverEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeCleanContainerEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.ActivitiesManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity
     .LeafQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.QueueEntitlement;
@@ -96,6 +97,8 @@ public abstract class AbstractYarnScheduler
   protected RMContext rmContext;
   
   private volatile Priority maxClusterLevelAppPriority;
+
+  protected ActivitiesManager activitiesManager;
 
   /*
    * All schedulers which are inheriting AbstractYarnScheduler should use
@@ -178,7 +181,7 @@ public abstract class AbstractYarnScheduler
     NodeFilter nodeFilter = new NodeFilter() {
       @Override
       public boolean accept(SchedulerNode node) {
-        return SchedulerAppUtils.isBlacklisted(app, node, LOG);
+        return SchedulerAppUtils.isPlaceBlacklisted(app, node, LOG);
       }
     };
     return nodeTracker.getNodes(nodeFilter);
@@ -354,14 +357,6 @@ public abstract class AbstractYarnScheduler
         continue;
       }
 
-      // Unmanaged AM recovery is addressed in YARN-1815
-      if (rmApp.getApplicationSubmissionContext().getUnmanagedAM()) {
-        LOG.info("Skip recovering container " + container + " for unmanaged AM."
-            + rmApp.getApplicationId());
-        killOrphanContainerOnNode(nm, container);
-        continue;
-      }
-
       SchedulerApplication<T> schedulerApp = applications.get(appId);
       if (schedulerApp == null) {
         LOG.info("Skip recovering container  " + container
@@ -442,6 +437,7 @@ public abstract class AbstractYarnScheduler
         Container.newInstance(status.getContainerId(), node.getNodeID(),
           node.getHttpAddress(), status.getAllocatedResource(),
           status.getPriority(), null);
+    container.setVersion(status.getVersion());
     ApplicationAttemptId attemptId =
         container.getId().getApplicationAttemptId();
     RMContainer rmContainer =
@@ -524,7 +520,23 @@ public abstract class AbstractYarnScheduler
       return;
     }
 
-    completedContainerInternal(rmContainer, containerStatus, event);
+    if (!rmContainer.isRemotelyAllocated()) {
+      completedContainerInternal(rmContainer, containerStatus, event);
+    } else {
+      ContainerId containerId = rmContainer.getContainerId();
+      // Inform the container
+      rmContainer.handle(
+          new RMContainerFinishedEvent(containerId, containerStatus, event));
+      SchedulerApplicationAttempt schedulerAttempt =
+          getCurrentAttemptForContainer(containerId);
+      if (schedulerAttempt != null) {
+        schedulerAttempt.removeRMContainer(containerId);
+      }
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Completed container: " + rmContainer.getContainerId() +
+            " in state: " + rmContainer.getState() + " event:" + event);
+      }
+    }
 
     // If the container is getting killed in ACQUIRED state, the requester (AM
     // for regular containers and RM itself for AM container) will not know what
@@ -564,7 +576,7 @@ public abstract class AbstractYarnScheduler
   }
 
   protected void decreaseContainers(
-      List<ContainerResourceChangeRequest> decreaseRequests,
+      List<UpdateContainerRequest> decreaseRequests,
       SchedulerApplicationAttempt attempt) {
     if (null == decreaseRequests || decreaseRequests.isEmpty()) {
       return;
@@ -737,7 +749,7 @@ public abstract class AbstractYarnScheduler
   /**
    * Sanity check increase/decrease request, and return
    * SchedulerContainerResourceChangeRequest according to given
-   * ContainerResourceChangeRequest.
+   * UpdateContainerRequest.
    * 
    * <pre>
    * - Returns non-null value means validation succeeded
@@ -745,7 +757,7 @@ public abstract class AbstractYarnScheduler
    * </pre>
    */
   private SchedContainerChangeRequest createSchedContainerChangeRequest(
-      ContainerResourceChangeRequest request, boolean increase)
+      UpdateContainerRequest request, boolean increase)
       throws YarnException {
     ContainerId containerId = request.getContainerId();
     RMContainer rmContainer = getRMContainer(containerId);
@@ -764,11 +776,11 @@ public abstract class AbstractYarnScheduler
 
   protected List<SchedContainerChangeRequest>
       createSchedContainerChangeRequests(
-          List<ContainerResourceChangeRequest> changeRequests,
+          List<UpdateContainerRequest> changeRequests,
           boolean increase) {
     List<SchedContainerChangeRequest> schedulerChangeRequests =
         new ArrayList<SchedContainerChangeRequest>();
-    for (ContainerResourceChangeRequest r : changeRequests) {
+    for (UpdateContainerRequest r : changeRequests) {
       SchedContainerChangeRequest sr = null;
       try {
         sr = createSchedContainerChangeRequest(r, increase);
@@ -781,4 +793,9 @@ public abstract class AbstractYarnScheduler
     }
     return schedulerChangeRequests;
   }
+
+  public ActivitiesManager getActivitiesManager() {
+    return this.activitiesManager;
+  }
+
 }

@@ -37,6 +37,7 @@ import org.junit.Test;
 
 import javax.security.auth.Subject;
 import javax.security.auth.kerberos.KerberosPrincipal;
+import javax.security.auth.kerberos.KeyTab;
 import javax.security.auth.login.AppConfigurationEntry;
 import javax.security.auth.login.LoginContext;
 
@@ -49,6 +50,7 @@ import java.security.PrivilegedExceptionAction;
 import java.util.Collection;
 import java.util.ConcurrentModificationException;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeys.HADOOP_USER_GROUP_METRICS_PERCENTILES_INTERVALS;
@@ -461,8 +463,10 @@ public class TestUserGroupInformation {
     UserGroupInformation uugi = 
       UserGroupInformation.createUserForTesting(USER_NAME, GROUP_NAMES);
     assertEquals(USER_NAME, uugi.getUserName());
-    assertArrayEquals(new String[]{GROUP1_NAME, GROUP2_NAME, GROUP3_NAME},
-                      uugi.getGroupNames());
+    String[] expected = new String[]{GROUP1_NAME, GROUP2_NAME, GROUP3_NAME};
+    assertArrayEquals(expected, uugi.getGroupNames());
+    assertArrayEquals(expected, uugi.getGroups().toArray(new String[0]));
+    assertEquals(GROUP1_NAME, uugi.getPrimaryGroupName());
   }
 
   @SuppressWarnings("unchecked") // from Mockito mocks
@@ -895,6 +899,32 @@ public class TestUserGroupInformation {
     assertEquals(1, tokens.size());
   }
 
+  @Test(timeout = 30000)
+  public void testCopySubjectAndUgi() throws IOException {
+    SecurityUtil.setAuthenticationMethod(AuthenticationMethod.SIMPLE, conf);
+    UserGroupInformation.setConfiguration(conf);
+    UserGroupInformation u1 = UserGroupInformation.getLoginUser();
+    assertNotNull(u1);
+    @SuppressWarnings("unchecked")
+    Token<? extends TokenIdentifier> tmpToken = mock(Token.class);
+    u1.addToken(tmpToken);
+
+    UserGroupInformation u2 = u1.copySubjectAndUgi();
+    assertEquals(u1.getAuthenticationMethod(), u2.getAuthenticationMethod());
+    assertNotSame(u1.getSubject(), u2.getSubject());
+    Credentials c1 = u1.getCredentials(), c2 = u2.getCredentials();
+    List<Text> sc1 = c1.getAllSecretKeys(), sc2 = c2.getAllSecretKeys();
+    assertArrayEquals(sc1.toArray(new Text[0]), sc2.toArray(new Text[0]));
+    Collection<Token<? extends TokenIdentifier>> ts1 = c1.getAllTokens(),
+        ts2 = c2.getAllTokens();
+    assertArrayEquals(ts1.toArray(new Token[0]), ts2.toArray(new Token[0]));
+    @SuppressWarnings("unchecked")
+    Token<? extends TokenIdentifier> token = mock(Token.class);
+    u2.addToken(token);
+    assertTrue(u2.getCredentials().getAllTokens().contains(token));
+    assertFalse(u1.getCredentials().getAllTokens().contains(token));
+  }
+
   /**
    * This test checks a race condition between getting and adding tokens for
    * the current user.  Calling UserGroupInformation.getCurrentUser() returns
@@ -1000,5 +1030,28 @@ public class TestUserGroupInformation {
     Collection<Token<?>> credsugiTokens = tokenUgi.getTokens();
     assertTrue(credsugiTokens.contains(token1));
     assertTrue(credsugiTokens.contains(token2));
+  }
+
+  @Test
+  public void testCheckTGTAfterLoginFromSubject() throws Exception {
+    // security on, default is remove default realm
+    SecurityUtil.setAuthenticationMethod(AuthenticationMethod.KERBEROS, conf);
+    UserGroupInformation.setConfiguration(conf);
+
+    // Login from a pre-set subject with a keytab
+    final Subject subject = new Subject();
+    KeyTab keytab = KeyTab.getInstance();
+    subject.getPrivateCredentials().add(keytab);
+    UserGroupInformation ugi = UserGroupInformation.getCurrentUser();
+    ugi.doAs(new PrivilegedExceptionAction<Void>() {
+      @Override
+      public Void run() throws IOException {
+        UserGroupInformation.loginUserFromSubject(subject);
+        // this should not throw.
+        UserGroupInformation.getLoginUser().checkTGTAndReloginFromKeytab();
+        return null;
+      }
+    });
+
   }
 }

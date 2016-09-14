@@ -289,6 +289,7 @@ public class PBHelperClient {
         .setId(convert((DatanodeID) info))
         .setCapacity(info.getCapacity())
         .setDfsUsed(info.getDfsUsed())
+        .setNonDfsUsed(info.getNonDfsUsed())
         .setRemaining(info.getRemaining())
         .setBlockPoolUsed(info.getBlockPoolUsed())
         .setCacheCapacity(info.getCacheCapacity())
@@ -581,15 +582,24 @@ public class PBHelperClient {
   }
 
   static public DatanodeInfo convert(DatanodeInfoProto di) {
-    if (di == null) return null;
-    return new DatanodeInfo(
-        convert(di.getId()),
-        di.hasLocation() ? di.getLocation() : null,
-        di.getCapacity(),  di.getDfsUsed(),  di.getRemaining(),
-        di.getBlockPoolUsed(), di.getCacheCapacity(), di.getCacheUsed(),
-        di.getLastUpdate(), di.getLastUpdateMonotonic(),
-        di.getXceiverCount(), convert(di.getAdminState()),
+    if (di == null) {
+      return null;
+    }
+    DatanodeInfo dinfo = new DatanodeInfo(convert(di.getId()),
+        di.hasLocation() ? di.getLocation() : null, di.getCapacity(),
+        di.getDfsUsed(), di.getRemaining(), di.getBlockPoolUsed(),
+        di.getCacheCapacity(), di.getCacheUsed(), di.getLastUpdate(),
+        di.getLastUpdateMonotonic(), di.getXceiverCount(),
+        convert(di.getAdminState()),
         di.hasUpgradeDomain() ? di.getUpgradeDomain() : null);
+    if (di.hasNonDfsUsed()) {
+      dinfo.setNonDfsUsed(di.getNonDfsUsed());
+    } else {
+      // use the legacy way for older datanodes
+      long nonDFSUsed = di.getCapacity() - di.getDfsUsed() - di.getRemaining();
+      dinfo.setNonDfsUsed(nonDFSUsed < 0 ? 0 : nonDFSUsed);
+    }
+    return dinfo;
   }
 
   public static StorageType[] convertStorageTypes(
@@ -851,6 +861,22 @@ public class PBHelperClient {
     }
 
     return results;
+  }
+
+  public static List<Integer> convertBlockIndices(byte[] blockIndices) {
+    List<Integer> results = new ArrayList<>(blockIndices.length);
+    for (byte bt : blockIndices) {
+      results.add(Integer.valueOf(bt));
+    }
+    return results;
+  }
+
+  public static byte[] convertBlockIndices(List<Integer> blockIndices) {
+    byte[] blkIndices = new byte[blockIndices.size()];
+    for (int i = 0; i < blockIndices.size(); i++) {
+      blkIndices[i] = (byte) blockIndices.get(i).intValue();
+    }
+    return blkIndices;
   }
 
   public static BlockStoragePolicy convert(BlockStoragePolicyProto proto) {
@@ -1187,6 +1213,10 @@ public class PBHelperClient {
     if (proto.hasLimit())  {
       info.setLimit(proto.getLimit());
     }
+    if (proto.hasDefaultReplication()) {
+      info.setDefaultReplication(Shorts.checkedCast(
+          proto.getDefaultReplication()));
+    }
     if (proto.hasMaxRelativeExpiry()) {
       info.setMaxRelativeExpiryMs(proto.getMaxRelativeExpiry());
     }
@@ -1217,6 +1247,9 @@ public class PBHelperClient {
     }
     if (info.getLimit() != null) {
       builder.setLimit(info.getLimit());
+    }
+    if (info.getDefaultReplication() != null) {
+      builder.setDefaultReplication(info.getDefaultReplication());
     }
     if (info.getMaxRelativeExpiryMs() != null) {
       builder.setMaxRelativeExpiry(info.getMaxRelativeExpiryMs());
@@ -1443,6 +1476,10 @@ public class PBHelperClient {
     builder.length(cs.getLength()).
         fileCount(cs.getFileCount()).
         directoryCount(cs.getDirectoryCount()).
+        snapshotLength(cs.getSnapshotLength()).
+        snapshotFileCount(cs.getSnapshotFileCount()).
+        snapshotDirectoryCount(cs.getSnapshotDirectoryCount()).
+        snapshotSpaceConsumed(cs.getSnapshotSpaceConsumed()).
         quota(cs.getQuota()).
         spaceConsumed(cs.getSpaceConsumed()).
         spaceQuota(cs.getSpaceQuota());
@@ -1529,12 +1566,12 @@ public class PBHelperClient {
   }
 
   public static StorageReport convert(StorageReportProto p) {
-    return new StorageReport(
-        p.hasStorage() ?
-            convert(p.getStorage()) :
-            new DatanodeStorage(p.getStorageUuid()),
-        p.getFailed(), p.getCapacity(), p.getDfsUsed(), p.getRemaining(),
-        p.getBlockPoolUsed());
+    long nonDfsUsed = p.hasNonDfsUsed() ? p.getNonDfsUsed() : p.getCapacity()
+        - p.getDfsUsed() - p.getRemaining();
+    return new StorageReport(p.hasStorage() ? convert(p.getStorage())
+        : new DatanodeStorage(p.getStorageUuid()), p.getFailed(),
+        p.getCapacity(), p.getDfsUsed(), p.getRemaining(),
+        p.getBlockPoolUsed(), nonDfsUsed);
   }
 
   public static DatanodeStorage convert(DatanodeStorageProto s) {
@@ -2046,6 +2083,10 @@ public class PBHelperClient {
     builder.setLength(cs.getLength()).
         setFileCount(cs.getFileCount()).
         setDirectoryCount(cs.getDirectoryCount()).
+        setSnapshotLength(cs.getSnapshotLength()).
+        setSnapshotFileCount(cs.getSnapshotFileCount()).
+        setSnapshotDirectoryCount(cs.getSnapshotDirectoryCount()).
+        setSnapshotSpaceConsumed(cs.getSnapshotSpaceConsumed()).
         setQuota(cs.getQuota()).
         setSpaceConsumed(cs.getSpaceConsumed()).
         setSpaceQuota(cs.getSpaceQuota());
@@ -2105,7 +2146,8 @@ public class PBHelperClient {
         .setBlockPoolUsed(r.getBlockPoolUsed()).setCapacity(r.getCapacity())
         .setDfsUsed(r.getDfsUsed()).setRemaining(r.getRemaining())
         .setStorageUuid(r.getStorage().getStorageID())
-        .setStorage(convert(r.getStorage()));
+        .setStorage(convert(r.getStorage()))
+        .setNonDfsUsed(r.getNonDfsUsed());
     return builder.build();
   }
 

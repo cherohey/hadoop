@@ -58,11 +58,12 @@ static void display_usage(FILE *stream) {
       "            launch docker container:      %2d appid containerid workdir container-script " \
                               "tokens pidfile nm-local-dirs nm-log-dirs docker-command-file resources optional-tc-command-file\n" \
       "            signal container:      %2d container-pid signal\n" \
-      "            delete as user:        %2d relative-path\n" ;
+      "            delete as user:        %2d relative-path\n" \
+      "            list as user:          %2d relative-path\n" ;
 
 
   fprintf(stream, usage_template, INITIALIZE_CONTAINER, LAUNCH_CONTAINER, LAUNCH_DOCKER_CONTAINER,
-          SIGNAL_CONTAINER, DELETE_AS_USER);
+          SIGNAL_CONTAINER, DELETE_AS_USER, LIST_AS_USER);
 }
 
 /* Sets up log files for normal/error logging */
@@ -83,7 +84,7 @@ static void flush_and_close_log_files() {
     fclose(LOGFILE);
     LOGFILE = NULL;
   }
-  
+
 if (ERRORFILE != NULL) {
     fflush(ERRORFILE);
     fclose(ERRORFILE);
@@ -96,19 +97,27 @@ in case of validation failures. Also sets up configuration / group information e
 This function is to be called in every invocation of container-executor, irrespective
 of whether an explicit checksetup operation is requested. */
 
-static void assert_valid_setup(char *current_executable) {
-  char *executable_file = get_executable();
+static void assert_valid_setup(char *argv0) {
+  int ret;
+  char *executable_file = get_executable(argv0);
+  if (!executable_file) {
+    fprintf(ERRORFILE,"realpath of executable: %s\n",strerror(errno));
+    flush_and_close_log_files();
+    exit(-1);
+  }
 
   char *orig_conf_file = HADOOP_CONF_DIR "/" CONF_FILENAME;
-  char *conf_file = resolve_config_path(orig_conf_file, current_executable);
+  char *conf_file = resolve_config_path(orig_conf_file, executable_file);
 
   if (conf_file == NULL) {
+    free(executable_file);
     fprintf(ERRORFILE, "Configuration file %s not found.\n", orig_conf_file);
     flush_and_close_log_files();
     exit(INVALID_CONFIG_FILE);
   }
 
   if (check_configuration_permissions(conf_file) != 0) {
+    free(executable_file);
     flush_and_close_log_files();
     exit(INVALID_CONFIG_FILE);
   }
@@ -118,28 +127,42 @@ static void assert_valid_setup(char *current_executable) {
   // look up the node manager group in the config file
   char *nm_group = get_nodemanager_group();
   if (nm_group == NULL) {
+    free(executable_file);
     fprintf(ERRORFILE, "Can't get configured value for %s.\n", NM_GROUP_KEY);
     flush_and_close_log_files();
     exit(INVALID_CONFIG_FILE);
   }
   struct group *group_info = getgrnam(nm_group);
   if (group_info == NULL) {
+    free(executable_file);
     fprintf(ERRORFILE, "Can't get group information for %s - %s.\n", nm_group,
             strerror(errno));
     flush_and_close_log_files();
     exit(INVALID_CONFIG_FILE);
   }
   set_nm_uid(getuid(), group_info->gr_gid);
-  // if we are running from a setuid executable, make the real uid root
-  setuid(0);
-  // set the real and effective group id to the node manager group
-  setgid(group_info->gr_gid);
+  /*
+   * if we are running from a setuid executable, make the real uid root
+   * we're going to ignore this result just in case we aren't.
+   */
+  ret=setuid(0);
+
+  /*
+   * set the real and effective group id to the node manager group
+   * we're going to ignore this result just in case we aren't
+   */
+  ret=setgid(group_info->gr_gid);
+
+  /* make the unused var warning to away */
+  ret++;
 
   if (check_executor_permissions(executable_file) != 0) {
+    free(executable_file);
     fprintf(ERRORFILE, "Invalid permissions on container-executor binary.\n");
     flush_and_close_log_files();
     exit(INVALID_CONTAINER_EXEC_PERMISSIONS);
   }
+  free(executable_file);
 }
 
 
@@ -147,20 +170,20 @@ static void assert_valid_setup(char *current_executable) {
 static struct {
   char *cgroups_hierarchy;
   char *traffic_control_command_file;
-  const char * run_as_user_name;
-  const char * yarn_user_name;
+  const char *run_as_user_name;
+  const char *yarn_user_name;
   char *local_dirs;
   char *log_dirs;
   char *resources_key;
   char *resources_value;
   char **resources_values;
-  const char * app_id;
-  const char * container_id;
-  const char * cred_file;
-  const char * script_file;
-  const char * current_dir;
-  const char * pid_file;
-  const char *dir_to_be_deleted;
+  const char *app_id;
+  const char *container_id;
+  const char *cred_file;
+  const char *script_file;
+  const char *current_dir;
+  const char *pid_file;
+  const char *target_dir;
   int container_pid;
   int signal;
   const char *docker_command_file;
@@ -395,8 +418,12 @@ static int validate_run_as_user_commands(int argc, char **argv, int *operation) 
     return 0;
 
   case DELETE_AS_USER:
-    cmd_input.dir_to_be_deleted = argv[optind++];
+    cmd_input.target_dir = argv[optind++];
     *operation = RUN_AS_USER_DELETE;
+    return 0;
+  case LIST_AS_USER:
+    cmd_input.target_dir = argv[optind++];
+    *operation = RUN_AS_USER_LIST;
     return 0;
   default:
     fprintf(ERRORFILE, "Invalid command %d not supported.",command);
@@ -532,8 +559,17 @@ int main(int argc, char **argv) {
     }
 
     exit_code = delete_as_user(cmd_input.yarn_user_name,
-                        cmd_input.dir_to_be_deleted,
+                        cmd_input.target_dir,
                         argv + optind);
+    break;
+  case RUN_AS_USER_LIST:
+    exit_code = set_user(cmd_input.run_as_user_name);
+
+    if (exit_code != 0) {
+      break;
+    }
+
+    exit_code = list_as_user(cmd_input.target_dir);
     break;
   }
 

@@ -67,14 +67,18 @@ public class ApplicationCLI extends YarnCLI {
   private static final String APPLICATION_ATTEMPTS_PATTERN =
     "%30s\t%20s\t%35s\t%35s"
       + System.getProperty("line.separator");
-  private static final String CONTAINER_PATTERN = 
-    "%30s\t%20s\t%20s\t%20s\t%20s\t%20s\t%35s"
-      + System.getProperty("line.separator");
 
   private static final String APP_TYPE_CMD = "appTypes";
   private static final String APP_STATE_CMD = "appStates";
+  private static final String APP_TAG_CMD = "appTags";
   private static final String ALLSTATES_OPTION = "ALL";
   private static final String QUEUE_CMD = "queue";
+
+  @VisibleForTesting
+  protected static final String CONTAINER_PATTERN =
+    "%30s\t%20s\t%20s\t%20s\t%20s\t%20s\t%35s"
+      + System.getProperty("line.separator");
+
   public static final String APPLICATION = "application";
   public static final String APPLICATION_ATTEMPT = "applicationattempt";
   public static final String CONTAINER = "container";
@@ -102,8 +106,9 @@ public class ApplicationCLI extends YarnCLI {
           "Prints the status of the application.");
       opts.addOption(LIST_CMD, false, "List applications. "
           + "Supports optional use of -appTypes to filter applications "
-          + "based on application type, "
-          + "and -appStates to filter applications based on application state.");
+          + "based on application type, -appStates to filter applications "
+          + "based on application state and -appTags to filter applications "
+          + "based on application tag.");
       opts.addOption(MOVE_TO_QUEUE_CMD, true, "Moves the application to a "
           + "different queue.");
       opts.addOption(QUEUE_CMD, true, "Works with the movetoqueue command to"
@@ -123,6 +128,13 @@ public class ApplicationCLI extends YarnCLI {
       appStateOpt.setArgs(Option.UNLIMITED_VALUES);
       appStateOpt.setArgName("States");
       opts.addOption(appStateOpt);
+      Option appTagOpt = new Option(APP_TAG_CMD, true, "Works with -list to "
+          + "filter applications based on input comma-separated list of "
+          + "application tags.");
+      appTagOpt.setValueSeparator(',');
+      appTagOpt.setArgs(Option.UNLIMITED_VALUES);
+      appTagOpt.setArgName("Tags");
+      opts.addOption(appTagOpt);
       opts.addOption(APP_ID, true, "Specify Application Id to be operated");
       opts.addOption(UPDATE_PRIORITY, true,
           "update priority of an application. ApplicationId can be"
@@ -229,7 +241,19 @@ public class ApplicationCLI extends YarnCLI {
             }
           }
         }
-        listApplications(appTypes, appStates);
+
+        Set<String> appTags = new HashSet<String>();
+        if (cliParser.hasOption(APP_TAG_CMD)) {
+          String[] tags = cliParser.getOptionValues(APP_TAG_CMD);
+          if (tags != null) {
+            for (String tag : tags) {
+              if (!tag.trim().isEmpty()) {
+                appTags.add(tag.trim());
+              }
+            }
+          }
+        }
+        listApplications(appTypes, appStates, appTags);
       } else if (args[0].equalsIgnoreCase(APPLICATION_ATTEMPT)) {
         if (args.length != 3) {
           printUsage(title, opts);
@@ -284,7 +308,7 @@ public class ApplicationCLI extends YarnCLI {
       if (signalArgs.length == 2) {
         command = SignalContainerCommand.valueOf(signalArgs[1]);
       }
-      signalContainer(containerId, command);
+      signalToContainer(containerId, command);
     } else {
       syserr.println("Invalid Command Usage : ");
       printUsage(title, opts);
@@ -299,11 +323,11 @@ public class ApplicationCLI extends YarnCLI {
    * @param command the signal command
    * @throws YarnException
    */
-  private void signalContainer(String containerIdStr,
+  private void signalToContainer(String containerIdStr,
       SignalContainerCommand command) throws YarnException, IOException {
-    ContainerId containerId = ConverterUtils.toContainerId(containerIdStr);
+    ContainerId containerId = ContainerId.fromString(containerIdStr);
     sysout.println("Signalling container " + containerIdStr);
-    client.signalContainer(containerId, command);
+    client.signalToContainer(containerId, command);
   }
 
   /**
@@ -327,8 +351,8 @@ public class ApplicationCLI extends YarnCLI {
       throws YarnException, IOException {
     ApplicationAttemptReport appAttemptReport = null;
     try {
-      appAttemptReport = client.getApplicationAttemptReport(ConverterUtils
-          .toApplicationAttemptId(applicationAttemptId));
+      appAttemptReport = client.getApplicationAttemptReport(
+          ApplicationAttemptId.fromString(applicationAttemptId));
     } catch (ApplicationNotFoundException e) {
       sysout.println("Application for AppAttempt with id '"
           + applicationAttemptId + "' doesn't exist in RM or Timeline Server.");
@@ -384,8 +408,7 @@ public class ApplicationCLI extends YarnCLI {
       IOException {
     ContainerReport containerReport = null;
     try {
-      containerReport = client.getContainerReport((ConverterUtils
-          .toContainerId(containerId)));
+      containerReport = client.getContainerReport(ContainerId.fromString(containerId));
     } catch (ApplicationNotFoundException e) {
       sysout.println("Application for Container with id '" + containerId
           + "' doesn't exist in RM or Timeline Server.");
@@ -435,17 +458,18 @@ public class ApplicationCLI extends YarnCLI {
   }
 
   /**
-   * Lists the applications matching the given application Types And application
-   * States present in the Resource Manager
+   * Lists the applications matching the given application Types, application
+   * States and application Tags present in the Resource Manager.
    * 
    * @param appTypes
    * @param appStates
+   * @param appTags
    * @throws YarnException
    * @throws IOException
    */
   private void listApplications(Set<String> appTypes,
-      EnumSet<YarnApplicationState> appStates) throws YarnException,
-      IOException {
+      EnumSet<YarnApplicationState> appStates, Set<String> appTags)
+      throws YarnException, IOException {
     PrintWriter writer = new PrintWriter(
         new OutputStreamWriter(sysout, Charset.forName("UTF-8")));
     if (allAppStates) {
@@ -461,11 +485,11 @@ public class ApplicationCLI extends YarnCLI {
     }
 
     List<ApplicationReport> appsReport = client.getApplications(appTypes,
-        appStates);
+        appStates, appTags);
 
     writer.println("Total number of applications (application-types: "
-        + appTypes + " and states: " + appStates + ")" + ":"
-        + appsReport.size());
+        + appTypes + ", states: " + appStates + " and tags: " + appTags + ")"
+        + ":" + appsReport.size());
     writer.printf(APPLICATIONS_PATTERN, "Application-Id", "Application-Name",
         "Application-Type", "User", "Queue", "State", "Final-State",
         "Progress", "Tracking-URL");
@@ -515,7 +539,7 @@ public class ApplicationCLI extends YarnCLI {
    */
   private void killApplication(String applicationId) throws YarnException,
       IOException {
-    ApplicationId appId = ConverterUtils.toApplicationId(applicationId);
+    ApplicationId appId = ApplicationId.fromString(applicationId);
     ApplicationReport  appReport = null;
     try {
       appReport = client.getApplicationReport(appId);
@@ -540,7 +564,7 @@ public class ApplicationCLI extends YarnCLI {
    */
   private void moveApplicationAcrossQueues(String applicationId, String queue)
       throws YarnException, IOException {
-    ApplicationId appId = ConverterUtils.toApplicationId(applicationId);
+    ApplicationId appId = ApplicationId.fromString(applicationId);
     ApplicationReport appReport = client.getApplicationReport(appId);
     if (appReport.getYarnApplicationState() == YarnApplicationState.FINISHED
         || appReport.getYarnApplicationState() == YarnApplicationState.KILLED
@@ -565,7 +589,7 @@ public class ApplicationCLI extends YarnCLI {
       IOException {
     ApplicationId appId;
     ApplicationAttemptId attId;
-    attId = ConverterUtils.toApplicationAttemptId(attemptId);
+    attId = ApplicationAttemptId.fromString(attemptId);
     appId = attId.getApplicationId();
 
     sysout.println("Failing attempt " + attId + " of application " + appId);
@@ -583,8 +607,8 @@ public class ApplicationCLI extends YarnCLI {
       throws YarnException, IOException {
     ApplicationReport appReport = null;
     try {
-      appReport = client.getApplicationReport(ConverterUtils
-          .toApplicationId(applicationId));
+      appReport = client.getApplicationReport(
+          ApplicationId.fromString(applicationId));
     } catch (ApplicationNotFoundException e) {
       sysout.println("Application with id '" + applicationId
           + "' doesn't exist in RM or Timeline Server.");
@@ -684,7 +708,7 @@ public class ApplicationCLI extends YarnCLI {
         new OutputStreamWriter(sysout, Charset.forName("UTF-8")));
 
     List<ApplicationAttemptReport> appAttemptsReport = client
-        .getApplicationAttempts(ConverterUtils.toApplicationId(applicationId));
+        .getApplicationAttempts(ApplicationId.fromString(applicationId));
     writer.println("Total number of application attempts " + ":"
         + appAttemptsReport.size());
     writer.printf(APPLICATION_ATTEMPTS_PATTERN, "ApplicationAttempt-Id",
@@ -711,8 +735,8 @@ public class ApplicationCLI extends YarnCLI {
     PrintWriter writer = new PrintWriter(
         new OutputStreamWriter(sysout, Charset.forName("UTF-8")));
 
-    List<ContainerReport> appsReport = client
-        .getContainers(ConverterUtils.toApplicationAttemptId(appAttemptId));
+    List<ContainerReport> appsReport = client.getContainers(
+        ApplicationAttemptId.fromString(appAttemptId));
     writer.println("Total number of containers " + ":" + appsReport.size());
     writer.printf(CONTAINER_PATTERN, "Container-Id", "Start Time",
         "Finish Time", "State", "Host", "Node Http Address", "LOG-URL");
@@ -735,7 +759,7 @@ public class ApplicationCLI extends YarnCLI {
    */
   private void updateApplicationPriority(String applicationId, String priority)
       throws YarnException, IOException {
-    ApplicationId appId = ConverterUtils.toApplicationId(applicationId);
+    ApplicationId appId = ApplicationId.fromString(applicationId);
     Priority newAppPriority = Priority.newInstance(Integer.parseInt(priority));
     sysout.println("Updating priority of an application " + applicationId);
     Priority updateApplicationPriority =

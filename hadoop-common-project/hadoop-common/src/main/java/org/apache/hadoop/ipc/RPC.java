@@ -85,7 +85,7 @@ public class RPC {
   final static int RPC_SERVICE_CLASS_DEFAULT = 0;
   public enum RpcKind {
     RPC_BUILTIN ((short) 1),         // Used for built in calls by tests
-    // 2 for WritableRpcEngine, obsolete and removed
+    RPC_WRITABLE ((short) 2),        // Use WritableRpcEngine 
     RPC_PROTOCOL_BUFFER ((short) 3); // Use ProtobufRpcEngine
     final static short MAX_INDEX = RPC_PROTOCOL_BUFFER.value; // used for array size
     private final short value;
@@ -208,7 +208,7 @@ public class RPC {
     RpcEngine engine = PROTOCOL_ENGINES.get(protocol);
     if (engine == null) {
       Class<?> impl = conf.getClass(ENGINE_PROP+"."+protocol.getName(),
-                                    ProtobufRpcEngine.class);
+                                    WritableRpcEngine.class);
       engine = (RpcEngine)ReflectionUtils.newInstance(impl, conf);
       PROTOCOL_ENGINES.put(protocol, engine);
     }
@@ -950,10 +950,10 @@ public class RPC {
      return new VerProtocolImpl(highestVersion,  highest);   
    }
   
-    protected Server(String bindAddress, int port,
+    protected Server(String bindAddress, int port, 
                      Class<? extends Writable> paramClass, int handlerCount,
                      int numReaders, int queueSizePerHandler,
-                     Configuration conf, String serverName,
+                     Configuration conf, String serverName, 
                      SecretManager<? extends TokenIdentifier> secretManager,
                      String portRangeConfig) throws IOException {
       super(bindAddress, port, paramClass, handlerCount, numReaders, queueSizePerHandler,

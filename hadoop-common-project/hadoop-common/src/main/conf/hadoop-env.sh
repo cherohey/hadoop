@@ -115,29 +115,34 @@ esac
 #
 # A note about classpaths.
 #
-# The classpath is configured such that entries are stripped prior
-# to handing to Java based either upon duplication or non-existence.
-# Wildcards and/or directories are *NOT* expanded as the
-# de-duplication is fairly simple.  So if two directories are in
-# the classpath that both contain awesome-methods-1.0.jar,
-# awesome-methods-1.0.jar will still be seen by java.  But if
-# the classpath specifically has awesome-methods-1.0.jar from the
-# same directory listed twice, the last one will be removed.
-#
+# By default, Apache Hadoop overrides Java's CLASSPATH
+# environment variable.  It is configured such
+# that it sarts out blank with new entries added after passing
+# a series of checks (file/dir exists, not already listed aka
+# de-deduplication).  During de-depulication, wildcards and/or
+# directories are *NOT* expanded to keep it simple. Therefore,
+# if the computed classpath has two specific mentions of
+# awesome-methods-1.0.jar, only the first one added will be seen.
+# If two directories are in the classpath that both contain
+# awesome-methods-1.0.jar, then Java will pick up both versions.
 
-# An additional, custom CLASSPATH.  This is really meant for
-# end users, but as an administrator, one might want to push
-# something extra in here too, such as the jar to the topology
-# method.  Just be sure to append to the existing HADOOP_USER_CLASSPATH
-# so end users have a way to add stuff.
-# export HADOOP_USER_CLASSPATH="/some/cool/path/on/your/machine"
+# An additional, custom CLASSPATH. Site-wide configs should be
+# handled via the shellprofile functionality, utilizing the
+# hadoop_add_classpath function for greater control and much
+# harder for apps/end-users to accidentally override.
+# Similarly, end users should utilize ${HOME}/.hadooprc .
+# This variable should ideally only be used as a short-cut,
+# interactive way for temporary additions on the command line.
+# export HADOOP_CLASSPATH="/some/cool/path/on/your/machine"
 
-# Should HADOOP_USER_CLASSPATH be first in the official CLASSPATH?
+# Should HADOOP_CLASSPATH be first in the official CLASSPATH?
 # export HADOOP_USER_CLASSPATH_FIRST="yes"
 
-# If HADOOP_USE_CLIENT_CLASSLOADER is set, HADOOP_CLASSPATH along with the main
-# jar are handled by a separate isolated client classloader. If it is set,
-# HADOOP_USER_CLASSPATH_FIRST is ignored. Can be defined by doing
+# If HADOOP_USE_CLIENT_CLASSLOADER is set, the classpath along
+# with the main jar are handled by a separate isolated
+# client classloader when 'hadoop jar', 'yarn jar', or 'mapred job'
+# is utilized. If it is set, HADOOP_CLASSPATH and
+# HADOOP_USER_CLASSPATH_FIRST are ignored.
 # export HADOOP_USE_CLIENT_CLASSLOADER=true
 
 # HADOOP_CLIENT_CLASSLOADER_SYSTEM_CLASSES overrides the default definition of
@@ -169,8 +174,8 @@ esac
 # export HADOOP_SSH_PARALLEL=10
 
 # Filename which contains all of the hosts for any remote execution
-# helper scripts # such as slaves.sh, start-dfs.sh, etc.
-# export HADOOP_SLAVES="${HADOOP_CONF_DIR}/slaves"
+# helper scripts # such as workers.sh, start-dfs.sh, etc.
+# export HADOOP_WORKERS="${HADOOP_CONF_DIR}/workers"
 
 ###
 # Options for all daemons
@@ -289,16 +294,16 @@ esac
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
 # a) Set JMX options
-# export HADOOP_NAMENODE_OPTS="-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port=1026"
+# export HDFS_NAMENODE_OPTS="-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port=1026"
 #
 # b) Set garbage collection logs
-# export HADOOP_NAMENODE_OPTS="${HADOOP_GC_SETTINGS} -Xloggc:${HADOOP_LOG_DIR}/gc-rm.log-$(date +'%Y%m%d%H%M')"
+# export HDFS_NAMENODE_OPTS="${HADOOP_GC_SETTINGS} -Xloggc:${HADOOP_LOG_DIR}/gc-rm.log-$(date +'%Y%m%d%H%M')"
 #
 # c) ... or set them directly
-# export HADOOP_NAMENODE_OPTS="-verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -Xloggc:${HADOOP_LOG_DIR}/gc-rm.log-$(date +'%Y%m%d%H%M')"
+# export HDFS_NAMENODE_OPTS="-verbose:gc -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -Xloggc:${HADOOP_LOG_DIR}/gc-rm.log-$(date +'%Y%m%d%H%M')"
 
 # this is the default:
-# export HADOOP_NAMENODE_OPTS="-Dhadoop.security.logger=INFO,RFAS"
+# export HDFS_NAMENODE_OPTS="-Dhadoop.security.logger=INFO,RFAS"
 
 ###
 # SecondaryNameNode specific parameters
@@ -308,7 +313,7 @@ esac
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
 # This is the default:
-# export HADOOP_SECONDARYNAMENODE_OPTS="-Dhadoop.security.logger=INFO,RFAS"
+# export HDFS_SECONDARYNAMENODE_OPTS="-Dhadoop.security.logger=INFO,RFAS"
 
 ###
 # DataNode specific parameters
@@ -318,7 +323,7 @@ esac
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
 # This is the default:
-# export HADOOP_DATANODE_OPTS="-Dhadoop.security.logger=ERROR,RFAS"
+# export HDFS_DATANODE_OPTS="-Dhadoop.security.logger=ERROR,RFAS"
 
 # On secure datanodes, user to run the datanode as after dropping privileges.
 # This **MUST** be uncommented to enable secure HDFS if using privileged ports
@@ -331,7 +336,7 @@ esac
 # Supplemental options for secure datanodes
 # By default, Hadoop uses jsvc which needs to know to launch a
 # server jvm.
-# export HADOOP_DN_SECURE_EXTRA_OPTS="-jvm server"
+# export HDFS_DATANODE_SECURE_EXTRA_OPTS="-jvm server"
 
 # Where datanode log files are stored in the secure data environment.
 # This will replace the hadoop.log.dir Java property in secure mode.
@@ -347,18 +352,18 @@ esac
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_NFS3_OPTS=""
+# export HDFS_NFS3_OPTS=""
 
 # Specify the JVM options to be used when starting the Hadoop portmapper.
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_PORTMAP_OPTS="-Xmx512m"
+# export HDFS_PORTMAP_OPTS="-Xmx512m"
 
 # Supplemental options for priviliged gateways
 # By default, Hadoop uses jsvc which needs to know to launch a
 # server jvm.
-# export HADOOP_NFS3_SECURE_EXTRA_OPTS="-jvm server"
+# export HDFS_NFS3_SECURE_EXTRA_OPTS="-jvm server"
 
 # On privileged gateways, user to run the gateway as after dropping privileges
 # This will replace the hadoop.id.str Java property in secure mode.
@@ -371,7 +376,7 @@ esac
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_ZKFC_OPTS=""
+# export HDFS_ZKFC_OPTS=""
 
 ###
 # QuorumJournalNode specific parameters
@@ -380,7 +385,7 @@ esac
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_JOURNALNODE_OPTS=""
+# export HDFS_JOURNALNODE_OPTS=""
 
 ###
 # HDFS Balancer specific parameters
@@ -389,7 +394,7 @@ esac
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_BALANCER_OPTS=""
+# export HDFS_BALANCER_OPTS=""
 
 ###
 # HDFS Mover specific parameters
@@ -398,7 +403,7 @@ esac
 # These options will be appended to the options specified as HADOOP_OPTS
 # and therefore may override any similar flags set in HADOOP_OPTS
 #
-# export HADOOP_MOVER_OPTS=""
+# export HDFS_MOVER_OPTS=""
 
 ###
 # Advanced Users Only!
@@ -412,6 +417,7 @@ esac
 #
 # To prevent accidents, shell commands be (superficially) locked
 # to only allow certain users to execute certain subcommands.
+# It uses the format of (command)_(subcommand)_USER.
 #
 # For example, to limit who can execute the namenode command,
-# export HADOOP_namenode_USER=hdfs
+# export HDFS_NAMENODE_USER=hdfs
